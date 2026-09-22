@@ -2,6 +2,20 @@
 
 This project uses an explicit, bounded workflow rather than free-form agent-to-agent recursion.
 
+## Current package layout
+- Top-level package: `agents/`
+- Specialized modules:
+  - `agents/market_agent.py`
+  - `agents/news_agent.py`
+  - `agents/risk_agent.py`
+  - `agents/supervisor_agent.py`
+  - `agents/evaluator_agent.py`
+  - `agents/orchestrator.py`
+  - `agents/profile.py`
+  - `agents/__init__.py`
+- Shared validation helpers live in `agents/shared.py` because they are genuinely used by multiple modules.
+- Legacy imports under `agents/research-agent/` remain as compatibility wrappers so older callers continue to work unchanged.
+
 ## Core structure
 - `TradingAssistOrchestrator` is the public workflow entry point.
 - `ResearchContext` is the validated input schema for all agents.

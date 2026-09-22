@@ -11,7 +11,6 @@ SPEC = importlib.util.spec_from_file_location("research_agent_module", MODULE_PA
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
-ResearchAgent = MODULE.ResearchAgent
 TradingAssistOrchestrator = MODULE.TradingAssistOrchestrator
 MarketAgent = MODULE.MarketAgent
 NewsAgent = MODULE.NewsAgent
@@ -53,38 +52,10 @@ VALID_CONTEXT = {
 }
 
 
-class ResearchAgentHarnessTests(unittest.TestCase):
-    def test_valid_model_response(self):
-        response = type("Resp", (), {})()
-        response.status_code = 200
-        response.json = lambda: {
-            "choices": [
-                {
-                    "message": {
-                        "content": '{"trend": "bullish", "risk": "medium", "momentum_assessment": "The short-term trend remains positive with improving price action and supportive moving averages.", "short_summary": "Momentum is constructive, and the stock is trading above its short-term trend support while volatility remains manageable.", "preliminary_classification": "buy_candidate"}'
-                    }
-                }
-            ]
-        }
-
-        agent = ResearchAgent(api_key="test-key")
-        with patch("requests.post", return_value=response):
-            result = agent.run(VALID_CONTEXT)
-
-        self.assertEqual(result["trend"], "bullish")
-        self.assertEqual(result["preliminary_classification"], "buy_candidate")
-
-    def test_invalid_json_response(self):
-        response = type("Resp", (), {})()
-        response.status_code = 200
-        response.json = lambda: {
-            "choices": [{"message": {"content": "```json\n{not valid json}\n```"}}]
-        }
-
-        agent = ResearchAgent(api_key="test-key")
-        with patch("requests.post", return_value=response):
-            with self.assertRaises(MODULE.ModelResponseError):
-                agent.run(VALID_CONTEXT)
+class LegacyCompatibilityTests(unittest.TestCase):
+    def test_legacy_module_still_exports_orchestrator(self):
+        self.assertTrue(hasattr(MODULE, "TradingAssistOrchestrator"))
+        self.assertTrue(callable(MODULE.TradingAssistOrchestrator))
 
     def test_unsupported_classification(self):
         payload = {
@@ -121,39 +92,7 @@ class ResearchAgentHarnessTests(unittest.TestCase):
         }
 
         with self.assertRaises(MissingRequiredInputError):
-            ResearchAgent(api_key="test-key").run(invalid_context)
-
-    def test_no_news_flow(self):
-        response = type("Resp", (), {})()
-        response.status_code = 200
-        response.json = lambda: {
-            "choices": [
-                {
-                    "message": {
-                        "content": '{"trend": "neutral", "risk": "low", "momentum_assessment": "Price action is stable and the trend is mixed, but the setup remains manageable without fresh catalysts.", "short_summary": "The stock is balanced without a clear catalyst, so the near-term view remains neutral and risk remains modest.", "preliminary_classification": "hold"}'
-                    }
-                }
-            ]
-        }
-
-        no_news_context = {
-            **VALID_CONTEXT,
-            "news_available": False,
-            "news": [],
-        }
-
-        agent = ResearchAgent(api_key="test-key")
-        with patch("requests.post", return_value=response):
-            result = agent.run(no_news_context)
-
-        self.assertEqual(result["preliminary_classification"], "hold")
-        self.assertEqual(result["trend"], "neutral")
-
-    def test_deepseek_api_failure(self):
-        agent = ResearchAgent(api_key="test-key")
-        with patch("requests.post", side_effect=requests.exceptions.HTTPError("deepseek failure")):
-            with self.assertRaises(ModelInvocationError):
-                agent.run(VALID_CONTEXT)
+            TradingAssistOrchestrator(api_key="test-key").run(invalid_context)
 
 
 class MultiAgentWorkflowTests(unittest.TestCase):

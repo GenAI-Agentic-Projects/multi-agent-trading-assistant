@@ -26,7 +26,6 @@ TradingProfile = profile_module.TradingProfile
 DEFAULT_TRADING_PROFILE = profile_module.DEFAULT_TRADING_PROFILE
 research_agent_module = _load_module("research_agent_core", "agent.py")
 TradingAssistOrchestrator = research_agent_module.TradingAssistOrchestrator
-ResearchAgent = research_agent_module.TradingAssistOrchestrator
 ResearchContext = research_agent_module.ResearchContext
 ResearchResponse = research_agent_module.ResearchOutput
 ModelInvocationError = research_agent_module.ModelInvocationError
