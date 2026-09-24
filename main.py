@@ -5,10 +5,18 @@ from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
 from database import init_db, get_db
 from models import Stock
-from schemas import StockCreate, StockUpdate, StockResponse, MarketDataResponse, AnalysisResponse
+from schemas import (
+    StockCreate,
+    StockUpdate,
+    StockResponse,
+    MarketDataResponse,
+    AnalysisResponse,
+    StockRankResponse,
+)
 from market_data import get_market_data
 from analytics import HistoricalDataError, HistoricalDataNotFoundError, RateLimitError, get_analysis
 from news import get_relevant_news_for_stock
+from ranking import rank_research_results
 
 AGENT_ROOT = Path(__file__).resolve().parent / "agents" / "research-agent"
 
@@ -33,6 +41,57 @@ ModelResponseError = research_agent_module.ModelResponseError
 MissingRequiredInputError = research_agent_module.MissingRequiredInputError
 
 app = FastAPI(title="TSX Stock Watchlist API", version="1.0.0")
+MAX_RANKING_STOCKS = 20
+
+
+def _read_stock_research_context(stock: Stock):
+    ticker = stock.ticker.upper()
+    try:
+        market_snapshot = get_market_data(ticker)
+        analytics = get_analysis(ticker)
+    except HistoricalDataNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RateLimitError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except HistoricalDataError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    try:
+        relevant_news = get_relevant_news_for_stock(ticker, stock.company_name, limit=3)
+    except Exception:
+        relevant_news = []
+
+    return {
+        "stock": {
+            "ticker": ticker,
+            "company_name": stock.company_name,
+        },
+        "market": {
+            "current_price": market_snapshot.get("current_price"),
+            "one_month_return": analytics.get("one_month_return"),
+            "three_month_return": analytics.get("three_month_return"),
+            "fifty_day_sma": analytics.get("fifty_day_sma"),
+            "annualized_volatility": analytics.get("annualized_volatility"),
+        },
+        "trading_profile": DEFAULT_TRADING_PROFILE.model_dump(),
+        "news_available": bool(relevant_news),
+        "news": relevant_news,
+    }
+
+
+def _run_single_stock_research(stock: Stock):
+    research_context = _read_stock_research_context(stock)
+
+    try:
+        result = TradingAssistOrchestrator().run(research_context)
+    except MissingRequiredInputError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ModelResponseError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except ModelInvocationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return ResearchResponse.model_validate(result).model_dump()
 
 
 @app.on_event("startup")
@@ -133,48 +192,35 @@ def get_stock_research(ticker: str, db: Session = Depends(get_db)):
     if not stock:
         raise HTTPException(status_code=404, detail=f"Stock with ticker {ticker} not found")
 
-    try:
-        market_snapshot = get_market_data(ticker.upper())
-        analytics = get_analysis(ticker.upper())
-    except HistoricalDataNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except RateLimitError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except HistoricalDataError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    try:
-        relevant_news = get_relevant_news_for_stock(ticker.upper(), stock.company_name, limit=3)
-    except Exception:
-        relevant_news = []
-
-    research_context = {
-        "stock": {
-            "ticker": ticker.upper(),
-            "company_name": stock.company_name,
-        },
-        "market": {
-            "current_price": market_snapshot.get("current_price"),
-            "one_month_return": analytics.get("one_month_return"),
-            "three_month_return": analytics.get("three_month_return"),
-            "fifty_day_sma": analytics.get("fifty_day_sma"),
-            "annualized_volatility": analytics.get("annualized_volatility"),
-        },
-        "trading_profile": DEFAULT_TRADING_PROFILE.model_dump(),
-        "news_available": bool(relevant_news),
-        "news": relevant_news,
-    }
-
-    try:
-        result = TradingAssistOrchestrator().run(research_context)
-    except MissingRequiredInputError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except ModelResponseError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    except ModelInvocationError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
+    result = _run_single_stock_research(stock)
     return ResearchResponse.model_validate(result)
+
+
+@app.get("/stocks/rank", response_model=StockRankResponse)
+def rank_active_stocks(limit: int = 20, db: Session = Depends(get_db)):
+    """Rank the currently active stocks in the watchlist using deterministic scoring."""
+    safe_limit = max(1, min(limit, MAX_RANKING_STOCKS))
+    active_stocks = (
+        db.query(Stock)
+        .filter(Stock.active.is_(True))
+        .order_by(Stock.ticker.asc())
+        .limit(safe_limit)
+        .all()
+    )
+
+    if not active_stocks:
+        return StockRankResponse(results=[], failed=[])
+
+    def research_fn(stock: Stock):
+        return _run_single_stock_research(stock)
+
+    return rank_research_results(
+        research_results=[],
+        stock_rows=active_stocks,
+        research_fn=research_fn,
+        limit=safe_limit,
+        include_failed=True,
+    )
 
 
 if __name__ == "__main__":

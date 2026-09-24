@@ -44,3 +44,26 @@ class AnalysisResponse(BaseModel):
     three_month_return: Optional[float] = Field(None, description="3-month return percentage")
     fifty_day_sma: Optional[float] = Field(None, description="50-day simple moving average in the quote provider's native currency (typically USD for standard symbols)")
     annualized_volatility: Optional[float] = Field(None, description="Annualized volatility percentage")
+
+
+class StockRankFailure(BaseModel):
+    ticker: str
+    reason: str
+
+
+class StockRankedResult(BaseModel):
+    rank: int
+    ticker: str
+    company_name: str
+    domain: str
+    score: int
+    preliminary_classification: str
+    confidence: str
+    trend: str
+    risk: str
+    short_reason: str
+
+
+class StockRankResponse(BaseModel):
+    results: list[StockRankedResult] = Field(default_factory=list)
+    failed: list[StockRankFailure] = Field(default_factory=list)
