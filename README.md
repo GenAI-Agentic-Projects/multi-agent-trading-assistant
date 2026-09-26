@@ -19,13 +19,22 @@ This project combines a simple stock watchlist API with a bounded multi-agent re
 
 The workflow is explicit and bounded rather than recursive. The implementation reflects three layers of engineering: harness, graph, and loop.
 
+### Recent milestones
+
+The project has recently added two important engineering upgrades:
+
+- OpenAI SDK migration: specialist agents now execute through the OpenAI Agents SDK, using an `AsyncOpenAI` client configured against the DeepSeek-compatible base URL while preserving the repo's `agents/` package naming and validation flow.
+- Observability: orchestration emits optional OpenAI tracing metadata and named custom spans for research-context build, evaluator decisions, and targeted rechecks. Tracing is disabled by default unless `OPENAI_API_KEY` is provided and not explicitly turned off via `OPENAI_TRACING_DISABLED`.
+
+These changes preserve the deterministic workflow while making execution easier to inspect in production and reducing risk during model-provider migration.
+
 ### Harness engineering
 
 Each specialist follows the same execution pattern:
 
 - build a constrained prompt
 - validate the incoming research context
-- call the DeepSeek chat-completion API through a common JSON wrapper
+- run the model through the OpenAI-compatible SDK layer (`Runner`, `Agent`, and `OpenAIChatCompletionsModel`)
 - parse and validate the returned payload
 - fail early on malformed or missing values
 
@@ -104,6 +113,16 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+### Environment variables
+
+```bash
+export DEEPSEEK_API_KEY="..."
+export OPENAI_API_KEY="..."   # optional, used for tracing/export only
+export OPENAI_TRACING_DISABLED="false"  # optional override to disable tracing
+```
+
+The app still uses the DeepSeek-compatible inference path for model calls, while the OpenAI SDK layer is used for agent execution and optional trace export.
+
 ## Run the app
 
 ```bash
@@ -155,3 +174,5 @@ curl "http://localhost:8000/stocks/SHOP/research"
 - This is a decision-support workflow, not an execution engine.
 - Inputs are validated before being passed downstream to specialist agents.
 - The orchestration is intentionally deterministic and bounded for reproducibility and easier testing.
+- Observability is intentionally optional: if tracing is unavailable or disabled, the research flow continues without interruption.
+- The OpenAI SDK migration is incremental and compatibility-friendly: the app delegates to the SDK where it adds value, while preserving the repo's validation and bounded-agent workflow.

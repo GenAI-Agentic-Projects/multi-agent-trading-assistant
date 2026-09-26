@@ -21,6 +21,11 @@ This project uses an explicit, bounded workflow rather than free-form agent-to-a
 - `ResearchContext` is the validated input schema for all agents.
 - Each specialist validates its inputs and outputs before the next stage runs.
 
+## Recent milestones
+- OpenAI SDK migration: the research pipeline now runs through the OpenAI Agents SDK abstraction (`Runner`, `Agent`, `OpenAIChatCompletionsModel`) while preserving the project’s DeepSeek-compatible API setup and existing JSON validation flow.
+- Observability layer: workflow execution emits optional OpenAI trace metadata and custom spans for context-building, evaluator decisions, and recheck events.
+- Failure tolerance: tracing is treated as optional infrastructure. If the SDK or export key is unavailable, the workflow logs a warning and continues without breaking agent execution.
+
 ## Agent responsibilities
 - `MarketAgent`
   - Input: stock identity + market analytics
@@ -64,6 +69,8 @@ This project uses an explicit, bounded workflow rather than free-form agent-to-a
 - No external market/news fetching happens inside the specialist agents.
 - The orchestrator owns sequencing and loop control.
 - All payloads are validated with Pydantic before downstream usage.
+- The OpenAI SDK integration is a compatibility layer, not a change to the agent graph itself; the orchestration rules and bounded loop remain intact.
+- Observability is layered on top of the workflow instead of embedded inside each specialist, so model execution remains easy to reason about and test.
 
 ## Evaluator and recheck behavior
 - `EvaluatorOutput.recheck_target` must be one of: `market`, `news`, `risk`, or `none`.
