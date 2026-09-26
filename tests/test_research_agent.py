@@ -371,6 +371,88 @@ class LoopEngineeringTests(unittest.TestCase):
             with self.assertRaises(MODULE.ModelInvocationError):
                 TradingAssistOrchestrator(api_key="test-key").run(VALID_CONTEXT)
 
+    def test_orchestrator_creates_root_trace_metadata(self):
+        class FakeTrace:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                return False
+
+        class FakeSpan:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                return False
+
+        class FakeSdk:
+            def __init__(self):
+                self.trace_calls = []
+                self.span_calls = []
+                self.export_key = None
+                self.disabled = False
+
+            def set_tracing_export_api_key(self, api_key):
+                self.export_key = api_key
+
+            def set_tracing_disabled(self, disabled):
+                self.disabled = disabled
+
+            def trace(self, workflow_name, **kwargs):
+                self.trace_calls.append((workflow_name, kwargs))
+                return FakeTrace()
+
+            def custom_span(self, name, data=None, **kwargs):
+                self.span_calls.append((name, data or {}))
+                return FakeSpan()
+
+        fake_sdk = FakeSdk()
+        market_result = {
+            "trend": "bullish",
+            "momentum_assessment": "Momentum is constructive and price action remains supportive.",
+            "market_summary": "The market context is constructive and trend remains favorable.",
+        }
+        news_result = {
+            "sentiment": "positive",
+            "catalyst_assessment": "The news flow is supportive and positive for short-term momentum.",
+            "news_summary": "Current headlines are constructive and supportive of the bullish setup.",
+        }
+        risk_result = {
+            "risk": "medium",
+            "downside_concerns": "Volatility remains manageable but merits a disciplined short-term approach.",
+            "short_term_suitability": "Moderately suitable for a short-term position with controlled risk.",
+        }
+        supervisor_result = {
+            "trend": "bullish",
+            "risk": "medium",
+            "momentum_assessment": "Momentum remains constructive and the short-term setup is favorable.",
+            "short_summary": "The setup remains favorable with manageable risk and supportive momentum.",
+            "preliminary_classification": "buy_candidate",
+        }
+        evaluator_result = {
+            "needs_recheck": False,
+            "reason": "The evidence is consistent and sufficiently supported.",
+            "recheck_target": "none",
+            "confidence": "high",
+        }
+
+        with patch("agents.orchestrator.load_openai_agents_sdk", return_value=fake_sdk), \
+             patch("agents.orchestrator.os.getenv", side_effect=lambda key, default=None: {"OPENAI_API_KEY": "test-openai-key"}.get(key, default)), \
+             patch.object(MarketAgent, "run", return_value=market_result), \
+             patch.object(NewsAgent, "run", return_value=news_result), \
+             patch.object(RiskAgent, "run", return_value=risk_result), \
+             patch.object(SupervisorAgent, "run", return_value=supervisor_result), \
+             patch.object(MODULE.EvaluatorAgent, "run", return_value=evaluator_result):
+            result = TradingAssistOrchestrator(api_key="test-key").run(VALID_CONTEXT)
+
+        self.assertEqual(result["preliminary_classification"], "buy_candidate")
+        self.assertTrue(fake_sdk.trace_calls)
+        self.assertEqual(fake_sdk.trace_calls[0][0], "TSX Stock Research")
+        self.assertEqual(fake_sdk.trace_calls[0][1]["metadata"]["ticker"], "SHOP")
+        self.assertEqual(fake_sdk.trace_calls[0][1]["metadata"]["workflow_type"], "research")
+        self.assertIn("build_research_context", [name for name, _ in fake_sdk.span_calls])
+
 
 if __name__ == "__main__":
     unittest.main()

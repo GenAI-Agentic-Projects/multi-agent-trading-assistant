@@ -15,6 +15,33 @@ from .profile import TradingProfile
 
 logger = logging.getLogger(__name__)
 
+
+def is_openai_tracing_disabled() -> bool:
+    raw = os.getenv("OPENAI_TRACING_DISABLED", "false").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def configure_openai_tracing(api_key: Optional[str] = None) -> bool:
+    """Configure SDK trace export separately from the DeepSeek inference key.
+
+    The app still uses DeepSeek for model inference. OpenAI tracing is optional and
+    should fail gracefully without breaking research execution.
+    """
+    trace_api_key = api_key or os.getenv("OPENAI_API_KEY")
+    disabled = is_openai_tracing_disabled() or not bool(trace_api_key)
+
+    try:
+        sdk = load_openai_agents_sdk()
+        if trace_api_key:
+            sdk.set_tracing_export_api_key(trace_api_key)
+        sdk.set_tracing_disabled(disabled)
+    except Exception as exc:  # pragma: no cover - trace exporter is optional
+        logger.warning("OpenAI tracing is unavailable; continuing without trace export: %s", exc)
+        return False
+
+    return not disabled
+
+
 SYSTEM_INSTRUCTIONS = """
 You are a short-term research assistant focused on decision support for the provided stock.
 You do not fetch market data, news, or execute trades.
@@ -420,6 +447,8 @@ __all__ = [
     "EvaluatorOutput",
     "SupervisorOutput",
     "MAX_RECHECKS",
+    "is_openai_tracing_disabled",
+    "configure_openai_tracing",
     "_parse_openai_style_response",
     "_call_deepseek_json",
     "TradingProfile",
