@@ -1,10 +1,14 @@
+import importlib.util
 import json
 import logging
 import os
 import re
+import sys
+from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
 import requests
+from openai import AsyncOpenAI
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .profile import TradingProfile
@@ -71,6 +75,53 @@ class ModelInvocationError(RuntimeError):
 
 class ModelResponseError(ValueError):
     """Raised when the model payload is malformed or cannot be validated."""
+
+
+def load_openai_agents_sdk():
+    """Load the external OpenAI Agents SDK without colliding with this repo's local agents package."""
+    project_root = str(Path(__file__).resolve().parents[1])
+    old_agents_module = sys.modules.get("agents")
+    old_path = list(sys.path)
+
+    try:
+        sys.path[:] = [p for p in sys.path if p not in ("", project_root)]
+        for base in [p for p in sys.path if "site-packages" in p]:
+            candidate = Path(base) / "agents" / "__init__.py"
+            if candidate.exists():
+                spec = importlib.util.spec_from_file_location(
+                    "agents",
+                    str(candidate),
+                    submodule_search_locations=[str(candidate.parent)],
+                )
+                module = importlib.util.module_from_spec(spec)
+                sys.modules["agents"] = module
+                spec.loader.exec_module(module)
+                return module
+        raise ModuleNotFoundError("OpenAI Agents SDK is not installed")
+    finally:
+        sys.path[:] = old_path
+        if old_agents_module is not None:
+            sys.modules["agents"] = old_agents_module
+        else:
+            sys.modules.pop("agents", None)
+
+
+def get_sdk_runner():
+    sdk = load_openai_agents_sdk()
+    return sdk.Runner
+
+
+def get_sdk_agent_class():
+    sdk = load_openai_agents_sdk()
+    return sdk.Agent
+
+
+def get_sdk_model(api_key: Optional[str], model_name: str, timeout_seconds: int, base_url: str = "https://api.deepseek.com/v1"):
+    if not api_key:
+        raise ModelInvocationError("DeepSeek API key is not configured")
+    sdk = load_openai_agents_sdk()
+    client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout_seconds)
+    return sdk.OpenAIChatCompletionsModel(model=model_name, openai_client=client)
 
 
 class NewsItem(BaseModel):

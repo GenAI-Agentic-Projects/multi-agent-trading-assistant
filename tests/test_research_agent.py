@@ -237,6 +237,28 @@ class MultiAgentWorkflowTests(unittest.TestCase):
         validated = ResearchOutput.validate_response(final_result)
         self.assertEqual(validated["preliminary_classification"], "buy_candidate")
 
+    def test_market_agent_executes_via_sdk_runner(self):
+        import agents.market_agent as market_module
+
+        class FakeAgent:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+        class FakeRunner:
+            def run_sync(self, agent, input):
+                return type("Result", (), {"final_output": {"trend": "bullish", "momentum_assessment": "Momentum remains constructive for the short term.", "market_summary": "The market context is supportive and trend intact."}})()
+
+        with patch.object(market_module, "get_sdk_runner", return_value=FakeRunner()), patch.object(market_module, "get_sdk_agent_class", return_value=FakeAgent), patch.object(market_module, "MarketAgentOutput") as mock_output:
+            mock_output.validate_response.return_value = {
+                "trend": "bullish",
+                "momentum_assessment": "Momentum remains constructive for the short term.",
+                "market_summary": "The market context is supportive and trend intact.",
+            }
+            result = market_module.MarketAgent(api_key="test-key").run(VALID_CONTEXT)
+
+        self.assertEqual(result["trend"], "bullish")
+        self.assertTrue(mock_output.validate_response.called)
+
 
 class LoopEngineeringTests(unittest.TestCase):
     def _mock_response(self, payload):
