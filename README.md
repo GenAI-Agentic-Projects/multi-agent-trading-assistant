@@ -123,6 +123,8 @@ export OPENAI_TRACING_DISABLED="false"  # optional override to disable tracing
 
 The app still uses the DeepSeek-compatible inference path for model calls, while the OpenAI SDK layer is used for agent execution and optional trace export.
 
+If you are running Python 3.9, install `eval_type_backport` (it is already included in `requirements.txt`) because the OpenAI tracing stack evaluates newer type syntax such as `float | None` on older interpreter versions.
+
 ## Run the app
 
 ```bash
@@ -134,6 +136,36 @@ The API is served on:
 ```text
 http://localhost:8000
 ```
+
+## Demo execution options
+
+### Option 1: run the demo runner
+
+Using the same environment variables defined above:
+
+```bash
+python3 demo_runner.py
+```
+
+This runs the full orchestrated agent flow for a sample `SHOP` research payload and prints the final recommendation. If tracing is enabled, the workflow will emit trace metadata that you can view in the OpenAI Dashboard.
+
+### Option 2: start the FastAPI app and call the research route manually
+
+```bash
+python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+Then in a second terminal:
+
+```bash
+curl -X POST "http://localhost:8000/stocks" \
+  -H "Content-Type: application/json" \
+  -d '{"ticker":"SHOP","company_name":"Shopify","active":true}'
+
+curl "http://localhost:8000/stocks/SHOP/research"
+```
+
+This exercises the same bounded multi-agent research flow through the HTTP route, which also triggers the optional OpenAI tracing path when configured.
 
 ## API endpoints
 

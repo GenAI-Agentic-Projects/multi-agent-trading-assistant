@@ -9,19 +9,19 @@ from .shared import (
     ModelResponseError,
     ResearchContext,
     _call_deepseek_json,
-    get_sdk_agent_class,
-    get_sdk_model,
-    get_sdk_runner,
+    invoke_langchain_structured,
+    langsmith_trace,
 )
 
 logger = logging.getLogger(__name__)
 
 
 class MarketAgent:
-    def __init__(self, api_key: Optional[str] = None, timeout_seconds: int = 15):
+    def __init__(self, api_key: Optional[str] = None, timeout_seconds: int = 15, provider: Optional[str] = None):
         self.api_key = api_key or os.getenv("DEEPSEEK_API_KEY")
-        self.model = "deepseek-chat"
-        self.base_url = "https://api.deepseek.com/v1"
+        self.provider = provider or os.getenv("MODEL_PROVIDER", "deepseek")
+        self.model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+        self.base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
         self.timeout_seconds = timeout_seconds
 
     def _build_user_prompt(self, context: ResearchContext) -> str:
@@ -52,39 +52,40 @@ class MarketAgent:
     def run(self, context: Union[ResearchContext, Dict[str, Any]]) -> Dict[str, Any]:
         logger.info("Market Agent started")
         validated_context = ResearchContext.validate_or_raise(context)
-        try:
-            sdk_agent_class = get_sdk_agent_class()
-            runner = get_sdk_runner()
-            output_type = MarketAgentOutput if isinstance(MarketAgentOutput, type) else None
-            agent = sdk_agent_class(
-                name="MarketAgent",
-                instructions="You are a market analyst. Use only the supplied market metrics. Return valid JSON with exactly: trend, momentum_assessment, market_summary. trend must be bullish, neutral, or bearish.",
-                model=get_sdk_model(self.api_key, self.model, self.timeout_seconds, self.base_url),
-                output_type=output_type,
-            )
-            result = runner.run_sync(agent, input=self._build_user_prompt(validated_context))
-            payload = getattr(result, "final_output", None)
-            if payload is not None:
-                if hasattr(payload, "model_dump"):
-                    payload = payload.model_dump()
-                elif not isinstance(payload, dict):
-                    payload = dict(payload)
+        with langsmith_trace(
+            "Market Agent",
+            metadata={
+                "ticker": validated_context.stock.ticker,
+                "provider": str(self.provider),
+                "model": str(self.model),
+            },
+        ):
+            try:
+                payload = invoke_langchain_structured(
+                    system_prompt="You are a market analyst. Use only the supplied market metrics. Return valid JSON with exactly: trend, momentum_assessment, market_summary. trend must be bullish, neutral, or bearish.",
+                    user_prompt=self._build_user_prompt(validated_context),
+                    schema=MarketAgentOutput,
+                    provider=self.provider,
+                    model_name=self.model,
+                    api_key=self.api_key,
+                    base_url=self.base_url,
+                    timeout_seconds=self.timeout_seconds,
+                )
                 validated = MarketAgentOutput.validate_response(payload)
                 logger.info("Market Agent completed")
                 return validated
-            raise ModelResponseError("SDK returned no final output")
-        except Exception as sdk_exc:
-            logger.warning("SDK execution failed, falling back to legacy DeepSeek request: %s", sdk_exc)
-            payload = _call_deepseek_json(
-                self.api_key,
-                self._build_prompt_messages(validated_context),
-                self.model,
-                self.base_url + "/chat/completions",
-                self.timeout_seconds,
-            )
-            result = MarketAgentOutput.validate_response(payload)
-            logger.info("Market Agent completed")
-            return result
+            except (ModelInvocationError, ModelResponseError) as exc:
+                logger.warning("LangChain execution failed, falling back to legacy DeepSeek request: %s", exc)
+                payload = _call_deepseek_json(
+                    self.api_key,
+                    self._build_prompt_messages(validated_context),
+                    self.model,
+                    self.base_url + "/chat/completions",
+                    self.timeout_seconds,
+                )
+                result = MarketAgentOutput.validate_response(payload)
+                logger.info("Market Agent completed")
+                return result
 
 
 __all__ = ["MarketAgent", "MarketAgentOutput"]

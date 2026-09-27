@@ -1,14 +1,11 @@
-import importlib.util
 import json
 import logging
 import os
 import re
-import sys
-from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from contextlib import contextmanager
+from typing import Any, Dict, Optional, Type, Union
 
 import requests
-from openai import AsyncOpenAI
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .profile import TradingProfile
@@ -16,30 +13,9 @@ from .profile import TradingProfile
 logger = logging.getLogger(__name__)
 
 
-def is_openai_tracing_disabled() -> bool:
-    raw = os.getenv("OPENAI_TRACING_DISABLED", "false").strip().lower()
+def is_langsmith_disabled() -> bool:
+    raw = os.getenv("LANGSMITH_DISABLED", "false").strip().lower()
     return raw in {"1", "true", "yes", "on"}
-
-
-def configure_openai_tracing(api_key: Optional[str] = None) -> bool:
-    """Configure SDK trace export separately from the DeepSeek inference key.
-
-    The app still uses DeepSeek for model inference. OpenAI tracing is optional and
-    should fail gracefully without breaking research execution.
-    """
-    trace_api_key = api_key or os.getenv("OPENAI_API_KEY")
-    disabled = is_openai_tracing_disabled() or not bool(trace_api_key)
-
-    try:
-        sdk = load_openai_agents_sdk()
-        if trace_api_key:
-            sdk.set_tracing_export_api_key(trace_api_key)
-        sdk.set_tracing_disabled(disabled)
-    except Exception as exc:  # pragma: no cover - trace exporter is optional
-        logger.warning("OpenAI tracing is unavailable; continuing without trace export: %s", exc)
-        return False
-
-    return not disabled
 
 
 SYSTEM_INSTRUCTIONS = """
@@ -104,51 +80,164 @@ class ModelResponseError(ValueError):
     """Raised when the model payload is malformed or cannot be validated."""
 
 
-def load_openai_agents_sdk():
-    """Load the external OpenAI Agents SDK without colliding with this repo's local agents package."""
-    project_root = str(Path(__file__).resolve().parents[1])
-    old_agents_module = sys.modules.get("agents")
-    old_path = list(sys.path)
+def is_langsmith_enabled() -> bool:
+    raw = os.getenv("LANGSMITH_DISABLED", "false").strip().lower()
+    return raw not in {"1", "true", "yes", "on"}
+
+
+def configure_langsmith(api_key: Optional[str] = None, project_name: Optional[str] = None) -> bool:
+    """Configure LangSmith tracing without making it a hard runtime dependency."""
+    if not is_langsmith_enabled():
+        return False
+
+    key = api_key or os.getenv("LANGCHAIN_API_KEY") or os.getenv("LANGSMITH_API_KEY")
+    if not key:
+        return False
 
     try:
-        sys.path[:] = [p for p in sys.path if p not in ("", project_root)]
-        for base in [p for p in sys.path if "site-packages" in p]:
-            candidate = Path(base) / "agents" / "__init__.py"
-            if candidate.exists():
-                spec = importlib.util.spec_from_file_location(
-                    "agents",
-                    str(candidate),
-                    submodule_search_locations=[str(candidate.parent)],
-                )
-                module = importlib.util.module_from_spec(spec)
-                sys.modules["agents"] = module
-                spec.loader.exec_module(module)
-                return module
-        raise ModuleNotFoundError("OpenAI Agents SDK is not installed")
-    finally:
-        sys.path[:] = old_path
-        if old_agents_module is not None:
-            sys.modules["agents"] = old_agents_module
-        else:
-            sys.modules.pop("agents", None)
+        os.environ["LANGCHAIN_API_KEY"] = key
+        if project_name:
+            os.environ["LANGCHAIN_PROJECT"] = project_name
+        os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
+        return True
+    except Exception as exc:  # pragma: no cover - optional infrastructure
+        logger.warning("LangSmith configuration failed; continuing without tracing: %s", exc)
+        return False
 
 
-def get_sdk_runner():
-    sdk = load_openai_agents_sdk()
-    return sdk.Runner
+@contextmanager
+def langsmith_trace(name: str, *, metadata: Optional[Dict[str, str]] = None, run_type: str = "chain"):
+    try:
+        from langsmith import trace
+
+        try:
+            with trace(name=name, run_type=run_type, metadata=metadata or {}):
+                yield
+        except TypeError:
+            with trace(name=name, metadata=metadata or {}):
+                yield
+    except Exception as exc:  # pragma: no cover - tracing is optional
+        logger.warning("LangSmith tracing unavailable; continuing without trace export: %s", exc)
+        yield
 
 
-def get_sdk_agent_class():
-    sdk = load_openai_agents_sdk()
-    return sdk.Agent
+def resolve_model_provider(provider: Optional[str] = None) -> str:
+    return (provider or os.getenv("MODEL_PROVIDER") or "deepseek").strip().lower()
 
 
-def get_sdk_model(api_key: Optional[str], model_name: str, timeout_seconds: int, base_url: str = "https://api.deepseek.com/v1"):
-    if not api_key:
-        raise ModelInvocationError("DeepSeek API key is not configured")
-    sdk = load_openai_agents_sdk()
-    client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout_seconds)
-    return sdk.OpenAIChatCompletionsModel(model=model_name, openai_client=client)
+def build_langchain_model(
+    provider: Optional[str] = None,
+    model_name: Optional[str] = None,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+    timeout_seconds: int = 15,
+):
+    provider_name = resolve_model_provider(provider)
+    if provider_name in {"deepseek", "openai"}:
+        try:
+            from langchain_openai import ChatOpenAI
+        except Exception as exc:
+            raise ModelInvocationError("langchain-openai is not installed") from exc
+
+        effective_key = api_key or os.getenv("OPENAI_API_KEY") or os.getenv("DEEPSEEK_API_KEY")
+        if not effective_key:
+            raise ModelInvocationError("No API key configured for the selected model provider")
+
+        if provider_name == "deepseek":
+            resolved_base_url = base_url or os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+            resolved_model = model_name or os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+            return ChatOpenAI(
+                model=resolved_model,
+                api_key=effective_key,
+                base_url=resolved_base_url,
+                temperature=0.2,
+                timeout=timeout_seconds,
+            )
+
+        resolved_model = model_name or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        return ChatOpenAI(
+            model=resolved_model,
+            api_key=effective_key,
+            temperature=0.2,
+            timeout=timeout_seconds,
+        )
+
+    if provider_name == "anthropic":
+        try:
+            from langchain_anthropic import ChatAnthropic
+        except Exception as exc:
+            raise ModelInvocationError("langchain-anthropic is not installed") from exc
+
+        effective_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+        if not effective_key:
+            raise ModelInvocationError("ANTHROPIC_API_KEY is not configured")
+
+        return ChatAnthropic(
+            model=model_name or os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022"),
+            api_key=effective_key,
+            temperature=0.2,
+            timeout=timeout_seconds,
+        )
+
+    raise ModelInvocationError(f"Unsupported model provider: {provider_name}")
+
+
+def invoke_langchain_structured(
+    system_prompt: str,
+    user_prompt: str,
+    schema: Type[BaseModel],
+    provider: Optional[str] = None,
+    model_name: Optional[str] = None,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+    timeout_seconds: int = 15,
+) -> Dict[str, Any]:
+    try:
+        from langchain_core.messages import HumanMessage, SystemMessage
+    except Exception as exc:
+        raise ModelInvocationError("langchain-core is not installed") from exc
+
+    model = build_langchain_model(
+        provider=provider,
+        model_name=model_name,
+        api_key=api_key,
+        base_url=base_url,
+        timeout_seconds=timeout_seconds,
+    )
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=user_prompt),
+    ]
+
+    try:
+        structured_model = model.with_structured_output(schema)
+        response = structured_model.invoke(messages)
+        if hasattr(response, "model_dump"):
+            return response.model_dump()
+        if isinstance(response, dict):
+            return response
+        if hasattr(response, "dict"):
+            return response.dict()
+        return json.loads(json.dumps(response))
+    except Exception:
+        try:
+            response = model.invoke(messages)
+            content = getattr(response, "content", "")
+            if not isinstance(content, str):
+                raise ModelResponseError("LangChain model returned malformed structured output")
+
+            cleaned = content.strip()
+            if cleaned.startswith("```"):
+                cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+                cleaned = re.sub(r"\s*```$", "", cleaned)
+
+            parsed = json.loads(cleaned)
+            validated = schema.model_validate(parsed)
+            return validated.model_dump()
+        except (TypeError, ValueError, json.JSONDecodeError, ValidationError) as exc:
+            raise ModelResponseError("LangChain model returned malformed structured output") from exc
+        except Exception as exc:
+            raise ModelInvocationError("LangChain model invocation failed") from exc
 
 
 class NewsItem(BaseModel):
@@ -260,15 +349,15 @@ class MarketAgentOutput(BaseModel):
     @classmethod
     def validate_response(cls, payload: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(payload, dict):
-            raise ValueError("market output must be a dictionary")
+            raise ValueError(f"market output must be a dictionary, got {type(payload).__name__}: {payload}")
         try:
             validated = cls.model_validate(payload)
         except ValidationError as exc:
-            raise ValueError("market output is invalid") from exc
+            raise ValueError(f"market output is invalid: {payload}") from exc
         if not validated.momentum_assessment.strip():
-            raise ValueError("momentum_assessment cannot be blank")
+            raise ValueError(f"momentum_assessment cannot be blank: {payload}")
         if not validated.market_summary.strip():
-            raise ValueError("market_summary cannot be blank")
+            raise ValueError(f"market_summary cannot be blank: {payload}")
         return validated.model_dump()
 
 
@@ -282,15 +371,15 @@ class NewsAgentOutput(BaseModel):
     @classmethod
     def validate_response(cls, payload: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(payload, dict):
-            raise ValueError("news output must be a dictionary")
+            raise ValueError(f"news output must be a dictionary, got {type(payload).__name__}: {payload}")
         try:
             validated = cls.model_validate(payload)
         except ValidationError as exc:
-            raise ValueError("news output is invalid") from exc
+            raise ValueError(f"news output is invalid: {payload}") from exc
         if not validated.catalyst_assessment.strip():
-            raise ValueError("catalyst_assessment cannot be blank")
+            raise ValueError(f"catalyst_assessment cannot be blank: {payload}")
         if not validated.news_summary.strip():
-            raise ValueError("news_summary cannot be blank")
+            raise ValueError(f"news_summary cannot be blank: {payload}")
         return validated.model_dump()
 
 
@@ -304,15 +393,15 @@ class RiskAgentOutput(BaseModel):
     @classmethod
     def validate_response(cls, payload: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(payload, dict):
-            raise ValueError("risk output must be a dictionary")
+            raise ValueError(f"risk output must be a dictionary, got {type(payload).__name__}: {payload}")
         try:
             validated = cls.model_validate(payload)
         except ValidationError as exc:
-            raise ValueError("risk output is invalid") from exc
+            raise ValueError(f"risk output is invalid: {payload}") from exc
         if not validated.downside_concerns.strip():
-            raise ValueError("downside_concerns cannot be blank")
+            raise ValueError(f"downside_concerns cannot be blank: {payload}")
         if not validated.short_term_suitability.strip():
-            raise ValueError("short_term_suitability cannot be blank")
+            raise ValueError(f"short_term_suitability cannot be blank: {payload}")
         return validated.model_dump()
 
 
@@ -330,17 +419,17 @@ class ResearchOutput(BaseModel):
     @classmethod
     def validate_response(cls, payload: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(payload, dict):
-            raise ValueError("research output must be a dictionary")
+            raise ValueError(f"research output must be a dictionary, got {type(payload).__name__}: {payload}")
 
         try:
             validated = cls.model_validate(payload)
         except ValidationError as exc:
-            raise ValueError("research output is invalid") from exc
+            raise ValueError(f"research output is invalid: {payload}") from exc
 
         if not validated.momentum_assessment.strip():
-            raise ValueError("momentum_assessment cannot be blank")
+            raise ValueError(f"momentum_assessment cannot be blank: {payload}")
         if not validated.short_summary.strip():
-            raise ValueError("short_summary cannot be blank")
+            raise ValueError(f"short_summary cannot be blank: {payload}")
 
         return validated.model_dump()
 
@@ -447,8 +536,12 @@ __all__ = [
     "EvaluatorOutput",
     "SupervisorOutput",
     "MAX_RECHECKS",
-    "is_openai_tracing_disabled",
-    "configure_openai_tracing",
+    "is_langsmith_disabled",
+    "configure_langsmith",
+    "langsmith_trace",
+    "resolve_model_provider",
+    "build_langchain_model",
+    "invoke_langchain_structured",
     "_parse_openai_style_response",
     "_call_deepseek_json",
     "TradingProfile",

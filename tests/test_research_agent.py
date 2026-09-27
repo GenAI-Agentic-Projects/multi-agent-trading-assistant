@@ -237,18 +237,14 @@ class MultiAgentWorkflowTests(unittest.TestCase):
         validated = ResearchOutput.validate_response(final_result)
         self.assertEqual(validated["preliminary_classification"], "buy_candidate")
 
-    def test_market_agent_executes_via_sdk_runner(self):
+    def test_market_agent_executes_via_langchain_adapter(self):
         import agents.market_agent as market_module
 
-        class FakeAgent:
-            def __init__(self, **kwargs):
-                self.kwargs = kwargs
-
-        class FakeRunner:
-            def run_sync(self, agent, input):
-                return type("Result", (), {"final_output": {"trend": "bullish", "momentum_assessment": "Momentum remains constructive for the short term.", "market_summary": "The market context is supportive and trend intact."}})()
-
-        with patch.object(market_module, "get_sdk_runner", return_value=FakeRunner()), patch.object(market_module, "get_sdk_agent_class", return_value=FakeAgent), patch.object(market_module, "MarketAgentOutput") as mock_output:
+        with patch.object(market_module, "invoke_langchain_structured", return_value={
+            "trend": "bullish",
+            "momentum_assessment": "Momentum remains constructive for the short term.",
+            "market_summary": "The market context is supportive and trend intact.",
+        }) as mock_invoke, patch.object(market_module, "MarketAgentOutput") as mock_output:
             mock_output.validate_response.return_value = {
                 "trend": "bullish",
                 "momentum_assessment": "Momentum remains constructive for the short term.",
@@ -257,6 +253,7 @@ class MultiAgentWorkflowTests(unittest.TestCase):
             result = market_module.MarketAgent(api_key="test-key").run(VALID_CONTEXT)
 
         self.assertEqual(result["trend"], "bullish")
+        self.assertTrue(mock_invoke.called)
         self.assertTrue(mock_output.validate_response.called)
 
 
@@ -437,8 +434,8 @@ class LoopEngineeringTests(unittest.TestCase):
             "confidence": "high",
         }
 
-        with patch("agents.orchestrator.load_openai_agents_sdk", return_value=fake_sdk), \
-             patch("agents.orchestrator.os.getenv", side_effect=lambda key, default=None: {"OPENAI_API_KEY": "test-openai-key"}.get(key, default)), \
+        with patch("agents.orchestrator.configure_langsmith", return_value=True), \
+             patch("agents.orchestrator.langsmith_trace") as mock_trace, \
              patch.object(MarketAgent, "run", return_value=market_result), \
              patch.object(NewsAgent, "run", return_value=news_result), \
              patch.object(RiskAgent, "run", return_value=risk_result), \
@@ -447,11 +444,10 @@ class LoopEngineeringTests(unittest.TestCase):
             result = TradingAssistOrchestrator(api_key="test-key").run(VALID_CONTEXT)
 
         self.assertEqual(result["preliminary_classification"], "buy_candidate")
-        self.assertTrue(fake_sdk.trace_calls)
-        self.assertEqual(fake_sdk.trace_calls[0][0], "TSX Stock Research")
-        self.assertEqual(fake_sdk.trace_calls[0][1]["metadata"]["ticker"], "SHOP")
-        self.assertEqual(fake_sdk.trace_calls[0][1]["metadata"]["workflow_type"], "research")
-        self.assertIn("build_research_context", [name for name, _ in fake_sdk.span_calls])
+        self.assertTrue(mock_trace.called)
+        self.assertEqual(mock_trace.call_args_list[0].args[0], "TSX Stock Research")
+        self.assertEqual(mock_trace.call_args_list[0].kwargs["metadata"]["ticker"], "SHOP")
+        self.assertEqual(mock_trace.call_args_list[0].kwargs["metadata"]["workflow_type"], "research")
 
 
 if __name__ == "__main__":

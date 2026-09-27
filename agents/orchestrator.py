@@ -17,8 +17,8 @@ from .shared import (
     SYSTEM_PROMPT,
     TRADING_PROFILE_INSTRUCTIONS,
     _call_deepseek_json,
-    configure_openai_tracing,
-    load_openai_agents_sdk,
+    configure_langsmith,
+    langsmith_trace,
 )
 from .supervisor_agent import SupervisorAgent
 
@@ -31,26 +31,13 @@ class TradingAssistOrchestrator:
         self.timeout_seconds = timeout_seconds
 
     def _workflow_trace(self, context: ResearchContext):
-        trace_enabled = configure_openai_tracing(os.getenv("OPENAI_API_KEY"))
-        if not trace_enabled:
-            return nullcontext()
-
-        try:
-            sdk = load_openai_agents_sdk()
-            trace_metadata = {
-                "ticker": context.stock.ticker,
-                "workflow_type": "research",
-                "news_available": bool(context.news_available),
-            }
-            return sdk.trace(
-                "TSX Stock Research",
-                metadata=trace_metadata,
-                tracing={"api_key": os.getenv("OPENAI_API_KEY")},
-                disabled=False,
-            )
-        except Exception as exc:  # pragma: no cover - tracing is optional
-            logger.warning("OpenAI tracing unavailable; continuing without workflow trace: %s", exc)
-            return nullcontext()
+        configure_langsmith(os.getenv("LANGCHAIN_API_KEY") or os.getenv("LANGSMITH_API_KEY"), project_name="tsx-stock-research")
+        trace_metadata = {
+            "ticker": str(context.stock.ticker),
+            "workflow_type": "research",
+            "news_available": "true" if context.news_available else "false",
+        }
+        return langsmith_trace("TSX Stock Research", metadata=trace_metadata)
 
     def run(self, research_payload: Union[ResearchContext, Dict[str, Any]]) -> Dict[str, Any]:
         logger.info("workflow execution started")
@@ -59,11 +46,11 @@ class TradingAssistOrchestrator:
 
         trace_context = self._workflow_trace(context)
         with trace_context:
-            with load_openai_agents_sdk().custom_span(
-                "build_research_context",
-                data={
-                    "ticker": context.stock.ticker,
-                    "news_available": bool(context.news_available),
+            with langsmith_trace(
+                "Build Research Context",
+                metadata={
+                    "ticker": str(context.stock.ticker),
+                    "news_available": "true" if context.news_available else "false",
                     "workflow_type": "research",
                 },
             ):
@@ -79,11 +66,11 @@ class TradingAssistOrchestrator:
             final_result.setdefault("confidence", "medium")
 
             while True:
-                with load_openai_agents_sdk().custom_span(
-                    "evaluator_decision",
-                    data={
+                with langsmith_trace(
+                    "Evaluator Decision",
+                    metadata={
                         "ticker": context.stock.ticker,
-                        "recheck_count": recheck_count,
+                        "recheck_count": str(recheck_count),
                     },
                 ):
                     evaluator_result = EvaluatorAgent(api_key=self.api_key, timeout_seconds=self.timeout_seconds).run(
@@ -110,14 +97,14 @@ class TradingAssistOrchestrator:
                 target = evaluator_result["recheck_target"]
                 logger.info("Recheck triggered for %s: %s", target, evaluator_result["reason"])
 
-                with load_openai_agents_sdk().custom_span(
-                    "targeted_recheck",
-                    data={
+                with langsmith_trace(
+                    "Targeted Recheck",
+                    metadata={
                         "ticker": context.stock.ticker,
                         "target": target,
                         "reason": evaluator_result["reason"],
                         "confidence": evaluator_result["confidence"],
-                        "recheck_count": recheck_count + 1,
+                        "recheck_count": str(recheck_count + 1),
                         "stop_reason": "max_rechecks_reached" if recheck_count >= MAX_RECHECKS - 1 else "sufficient_confidence",
                     },
                 ):
