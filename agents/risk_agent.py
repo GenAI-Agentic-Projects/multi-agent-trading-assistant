@@ -17,6 +17,13 @@ from .shared import (
 
 logger = logging.getLogger(__name__)
 
+RISK_AGENT_SYSTEM_PROMPT = """You are a risk analyst. Use market trend, momentum, sentiment, volatility, and the trading profile to assess short-term risk.
+
+Return valid JSON with exactly these fields: risk, downside_concerns, short_term_suitability.
+- risk must be exactly one of: low, medium, high. Do not use synonyms such as moderate.
+- downside_concerns and short_term_suitability must each be a string of 20 to 500 characters containing complete sentences. Do not return lists or arrays for either field.
+- Use only the supplied evidence and do not invent facts."""
+
 
 class RiskAgent:
     def __init__(self, api_key: Optional[str] = None, timeout_seconds: int = 15, provider: Optional[str] = None):
@@ -37,7 +44,7 @@ class RiskAgent:
 
     def _build_prompt_messages(self, context: ResearchContext, market_result: Dict[str, Any], news_result: Dict[str, Any]) -> list[dict[str, str]]:
         return [
-            {"role": "system", "content": "You are a risk analyst. Use market trend, momentum, sentiment and the trading profile to assess short-term risk. Return valid JSON with exactly: risk, downside_concerns, short_term_suitability."},
+            {"role": "system", "content": RISK_AGENT_SYSTEM_PROMPT},
             {"role": "user", "content": json.dumps({
                 "ticker": context.stock.ticker,
                 "annualized_volatility": context.market.annualized_volatility,
@@ -62,7 +69,7 @@ class RiskAgent:
         ):
             try:
                 payload = invoke_langchain_structured(
-                    system_prompt="You are a risk analyst. Use market trend, momentum, sentiment and the trading profile to assess short-term risk. Return valid JSON with exactly: risk, downside_concerns, short_term_suitability.",
+                    system_prompt=RISK_AGENT_SYSTEM_PROMPT,
                     user_prompt=self._build_user_prompt(validated_context, validated_market, validated_news),
                     schema=RiskAgentOutput,
                     provider=self.provider,

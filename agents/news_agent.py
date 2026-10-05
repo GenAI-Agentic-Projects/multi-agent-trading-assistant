@@ -62,7 +62,7 @@ class NewsAgent:
         ):
             try:
                 payload = invoke_langchain_structured(
-                    system_prompt="You are a news analyst. Evaluate only the supplied Yahoo Finance news context. If there is no relevant news, return sentiment=unavailable and do not invent anything. Return valid JSON with exactly: sentiment, catalyst_assessment, news_summary.",
+                    system_prompt="You are a news analyst. Evaluate only the supplied Yahoo Finance news context. If there is no relevant news, return sentiment=unavailable and do not invent anything. Return valid JSON with exactly: sentiment, catalyst_assessment, news_summary. catalyst_assessment and news_summary must be complete sentences, not single-word labels.",
                     user_prompt=self._build_user_prompt(validated_context),
                     schema=NewsAgentOutput,
                     provider=self.provider,

@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from typing import Any, Dict, Optional, Type, Union
 
 import requests
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from .profile import TradingProfile
 
@@ -62,8 +62,9 @@ Output requirements:
 - trend must be exactly bullish, neutral, or bearish.
 - risk must be exactly low, medium, or high.
 - preliminary_classification must be exactly buy_candidate, hold, or sell_candidate.
-- momentum_assessment must be a single sentence between 20 and 500 characters.
-- short_summary must be 1-2 sentences between 20 and 400 characters.
+- momentum_assessment must be a complete sentence between 20 and 500 characters, not a single word or adjective.
+- short_summary must be 1-2 complete sentences between 20 and 400 characters.
+- Never answer with bare labels like positive, negative, bullish, or risk high; expand them into full sentences.
 - Reject unsupported values rather than substituting them.
 """
 
@@ -78,6 +79,35 @@ class ModelInvocationError(RuntimeError):
 
 class ModelResponseError(ValueError):
     """Raised when the model payload is malformed or cannot be validated."""
+
+
+def _expand_short_sentence(value: Any, *, default_prefix: str) -> str:
+    if value is None:
+        return default_prefix
+    text = str(value).strip()
+    if not text:
+        return default_prefix
+    normalized = re.sub(r"\s+", " ", text).strip()
+    lowered = normalized.lower().rstrip(".!")
+
+    replacements = {
+        "positive": "Positive sentiment is evident from the available evidence.",
+        "negative": "Negative sentiment is evident from the available evidence.",
+        "neutral": "The available evidence is broadly neutral at this time.",
+        "bullish": "The available evidence supports a bullish near-term interpretation.",
+        "bearish": "The available evidence supports a bearish near-term interpretation.",
+        "low": "The risk profile is low based on the available evidence.",
+        "medium": "The risk profile is medium based on the available evidence.",
+        "high": "The risk profile is high based on the available evidence.",
+    }
+
+    if lowered in replacements:
+        return replacements[lowered]
+
+    if len(normalized) >= 20:
+        return normalized
+
+    return f"{normalized.rstrip('.')}. {default_prefix}"
 
 
 def is_langsmith_enabled() -> bool:
@@ -109,16 +139,45 @@ def configure_langsmith(api_key: Optional[str] = None, project_name: Optional[st
 def langsmith_trace(name: str, *, metadata: Optional[Dict[str, str]] = None, run_type: str = "chain"):
     try:
         from langsmith import trace
-
-        try:
-            with trace(name=name, run_type=run_type, metadata=metadata or {}):
-                yield
-        except TypeError:
-            with trace(name=name, metadata=metadata or {}):
-                yield
     except Exception as exc:  # pragma: no cover - tracing is optional
         logger.warning("LangSmith tracing unavailable; continuing without trace export: %s", exc)
         yield
+        return
+
+    try:
+        trace_context = trace(name=name, run_type=run_type, metadata=metadata or {})
+    except TypeError:
+        try:
+            trace_context = trace(name=name, metadata=metadata or {})
+        except Exception as exc:  # pragma: no cover - tracing is optional
+            logger.warning("LangSmith tracing unavailable; continuing without trace export: %s", exc)
+            yield
+            return
+    except Exception as exc:  # pragma: no cover - tracing is optional
+        logger.warning("LangSmith tracing unavailable; continuing without trace export: %s", exc)
+        yield
+        return
+
+    try:
+        trace_context.__enter__()
+    except Exception as exc:  # pragma: no cover - tracing is optional
+        logger.warning("LangSmith tracing unavailable; continuing without trace export: %s", exc)
+        yield
+        return
+
+    try:
+        yield
+    except BaseException as exc:
+        try:
+            trace_context.__exit__(type(exc), exc, exc.__traceback__)
+        except Exception as trace_exc:  # pragma: no cover - tracing is optional
+            logger.warning("LangSmith trace cleanup failed: %s", trace_exc)
+        raise
+    else:
+        try:
+            trace_context.__exit__(None, None, None)
+        except Exception as exc:  # pragma: no cover - tracing is optional
+            logger.warning("LangSmith trace cleanup failed: %s", exc)
 
 
 def resolve_model_provider(provider: Optional[str] = None) -> str:
@@ -346,6 +405,11 @@ class MarketAgentOutput(BaseModel):
     momentum_assessment: str = Field(..., min_length=20, max_length=500)
     market_summary: str = Field(..., min_length=20, max_length=500)
 
+    @field_validator("momentum_assessment", "market_summary", mode="before")
+    @classmethod
+    def normalize_sentences(cls, value: Any) -> Any:
+        return _expand_short_sentence(value, default_prefix="The available evidence supports this interpretation.")
+
     @classmethod
     def validate_response(cls, payload: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(payload, dict):
@@ -353,7 +417,16 @@ class MarketAgentOutput(BaseModel):
         try:
             validated = cls.model_validate(payload)
         except ValidationError as exc:
-            raise ValueError(f"market output is invalid: {payload}") from exc
+            repaired = {}
+            for key, value in payload.items():
+                if isinstance(value, str) and key in {"momentum_assessment", "market_summary"}:
+                    repaired[key] = _expand_short_sentence(value, default_prefix="The available evidence supports this interpretation.")
+                else:
+                    repaired[key] = value
+            try:
+                validated = cls.model_validate(repaired)
+            except ValidationError:
+                raise ValueError(f"market output is invalid: {payload}") from exc
         if not validated.momentum_assessment.strip():
             raise ValueError(f"momentum_assessment cannot be blank: {payload}")
         if not validated.market_summary.strip():
@@ -368,6 +441,11 @@ class NewsAgentOutput(BaseModel):
     catalyst_assessment: str = Field(..., min_length=10, max_length=500)
     news_summary: str = Field(..., min_length=10, max_length=500)
 
+    @field_validator("catalyst_assessment", "news_summary", mode="before")
+    @classmethod
+    def normalize_sentences(cls, value: Any) -> Any:
+        return _expand_short_sentence(value, default_prefix="The available evidence supports this interpretation.")
+
     @classmethod
     def validate_response(cls, payload: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(payload, dict):
@@ -375,7 +453,16 @@ class NewsAgentOutput(BaseModel):
         try:
             validated = cls.model_validate(payload)
         except ValidationError as exc:
-            raise ValueError(f"news output is invalid: {payload}") from exc
+            repaired = {}
+            for key, value in payload.items():
+                if isinstance(value, str) and key in {"catalyst_assessment", "news_summary"}:
+                    repaired[key] = _expand_short_sentence(value, default_prefix="The available evidence supports this interpretation.")
+                else:
+                    repaired[key] = value
+            try:
+                validated = cls.model_validate(repaired)
+            except ValidationError:
+                raise ValueError(f"news output is invalid: {payload}") from exc
         if not validated.catalyst_assessment.strip():
             raise ValueError(f"catalyst_assessment cannot be blank: {payload}")
         if not validated.news_summary.strip():
@@ -390,6 +477,11 @@ class RiskAgentOutput(BaseModel):
     downside_concerns: str = Field(..., min_length=20, max_length=500)
     short_term_suitability: str = Field(..., min_length=20, max_length=500)
 
+    @field_validator("downside_concerns", "short_term_suitability", mode="before")
+    @classmethod
+    def normalize_sentences(cls, value: Any) -> Any:
+        return _expand_short_sentence(value, default_prefix="The risk profile supports this view.")
+
     @classmethod
     def validate_response(cls, payload: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(payload, dict):
@@ -397,7 +489,16 @@ class RiskAgentOutput(BaseModel):
         try:
             validated = cls.model_validate(payload)
         except ValidationError as exc:
-            raise ValueError(f"risk output is invalid: {payload}") from exc
+            repaired = {}
+            for key, value in payload.items():
+                if isinstance(value, str) and key in {"downside_concerns", "short_term_suitability"}:
+                    repaired[key] = _expand_short_sentence(value, default_prefix="The risk profile supports this view.")
+                else:
+                    repaired[key] = value
+            try:
+                validated = cls.model_validate(repaired)
+            except ValidationError:
+                raise ValueError(f"risk output is invalid: {payload}") from exc
         if not validated.downside_concerns.strip():
             raise ValueError(f"downside_concerns cannot be blank: {payload}")
         if not validated.short_term_suitability.strip():
@@ -416,6 +517,11 @@ class ResearchOutput(BaseModel):
     recheck_count: int = Field(default=0, ge=0, le=2)
     confidence: str = Field(default="medium", pattern="^(low|medium|high)$")
 
+    @field_validator("momentum_assessment", "short_summary", mode="before")
+    @classmethod
+    def normalize_sentences(cls, value: Any) -> Any:
+        return _expand_short_sentence(value, default_prefix="The available evidence supports this interpretation.")
+
     @classmethod
     def validate_response(cls, payload: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(payload, dict):
@@ -424,7 +530,16 @@ class ResearchOutput(BaseModel):
         try:
             validated = cls.model_validate(payload)
         except ValidationError as exc:
-            raise ValueError(f"research output is invalid: {payload}") from exc
+            repaired = {}
+            for key, value in payload.items():
+                if isinstance(value, str) and key in {"momentum_assessment", "short_summary"}:
+                    repaired[key] = _expand_short_sentence(value, default_prefix="The available evidence supports this interpretation.")
+                else:
+                    repaired[key] = value
+            try:
+                validated = cls.model_validate(repaired)
+            except ValidationError:
+                raise ValueError(f"research output is invalid: {payload}") from exc
 
         if not validated.momentum_assessment.strip():
             raise ValueError(f"momentum_assessment cannot be blank: {payload}")

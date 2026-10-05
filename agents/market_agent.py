@@ -62,7 +62,7 @@ class MarketAgent:
         ):
             try:
                 payload = invoke_langchain_structured(
-                    system_prompt="You are a market analyst. Use only the supplied market metrics. Return valid JSON with exactly: trend, momentum_assessment, market_summary. trend must be bullish, neutral, or bearish.",
+                    system_prompt="You are a market analyst. Use only the supplied market metrics. Return valid JSON with exactly: trend, momentum_assessment, market_summary. trend must be bullish, neutral, or bearish. momentum_assessment and market_summary must be complete sentences of at least 20 characters, not bare words like positive or bearish.",
                     user_prompt=self._build_user_prompt(validated_context),
                     schema=MarketAgentOutput,
                     provider=self.provider,

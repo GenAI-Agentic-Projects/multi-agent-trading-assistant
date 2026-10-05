@@ -89,7 +89,7 @@ class EvaluatorAgent:
         ):
             try:
                 payload = invoke_langchain_structured(
-                    system_prompt="You are an evaluator. Check whether the specialist outputs are consistent and whether the supervisor recommendation is sufficiently supported. Return valid JSON with exactly: needs_recheck, reason, recheck_target, confidence.",
+                    system_prompt="You are an evaluator. Check whether the specialist outputs are consistent and whether the supervisor recommendation is sufficiently supported. Return valid JSON with exactly: needs_recheck, reason, recheck_target, confidence. reason must be a complete sentence explaining the decision, not a short label or fragment.",
                     user_prompt=self._build_user_prompt(validated_context, validated_market, validated_news, validated_risk, validated_supervisor),
                     schema=EvaluatorOutput,
                     provider=self.provider,
