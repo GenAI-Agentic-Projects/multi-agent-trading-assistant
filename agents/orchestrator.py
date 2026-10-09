@@ -13,7 +13,6 @@ from .shared import (
     MissingRequiredInputError,
     ResearchContext,
     ResearchOutput,
-    SYSTEM_INSTRUCTIONS,
     SYSTEM_PROMPT,
     TRADING_PROFILE_INSTRUCTIONS,
     _call_deepseek_json,

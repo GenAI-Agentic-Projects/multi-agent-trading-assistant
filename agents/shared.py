@@ -18,15 +18,17 @@ def is_langsmith_disabled() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
-SYSTEM_INSTRUCTIONS = """
-You are a short-term research assistant focused on decision support for the provided stock.
-You do not fetch market data, news, or execute trades.
-Use only the supplied evidence. If required facts are missing, state that the available evidence is limited.
-Do not invent missing values or fabricate financial metrics.
-If news is unavailable, do not make any claim based on news.
-Keep the analysis brief, practical, and oriented to short-term trading support only.
-Return valid JSON only with the exact required schema.
-"""
+# Legacy prompt retained for reference; the supervisor now uses SYSTEM_PROMPT,
+# which includes the active role, evidence boundaries, and required output schema.
+# SYSTEM_INSTRUCTIONS = """
+# You are a short-term research assistant focused on decision support for the provided stock.
+# You do not fetch market data, news, or execute trades.
+# Use only the supplied evidence. If required facts are missing, state that the available evidence is limited.
+# Do not invent missing values or fabricate financial metrics.
+# If news is unavailable, do not make any claim based on news.
+# Keep the analysis brief, practical, and oriented to short-term trading support only.
+# Return valid JSON only with the exact required schema.
+# """
 
 TRADING_PROFILE_INSTRUCTIONS = """
 Trading profile context:
@@ -634,7 +636,6 @@ def _call_deepseek_json(api_key: Optional[str], messages: list[dict[str, str]], 
 
 
 __all__ = [
-    "SYSTEM_INSTRUCTIONS",
     "TRADING_PROFILE_INSTRUCTIONS",
     "SYSTEM_PROMPT",
     "MissingRequiredInputError",
