@@ -22,9 +22,9 @@ This project uses an explicit, bounded workflow rather than free-form agent-to-a
 - Each specialist validates its inputs and outputs before the next stage runs.
 
 ## Recent milestones
-- OpenAI SDK migration: the research pipeline now runs through the OpenAI Agents SDK abstraction (`Runner`, `Agent`, `OpenAIChatCompletionsModel`) while preserving the project’s DeepSeek-compatible API setup and existing JSON validation flow.
-- Observability layer: workflow execution emits optional OpenAI trace metadata and custom spans for context-building, evaluator decisions, and recheck events.
-- Failure tolerance: tracing is treated as optional infrastructure. If the SDK or export key is unavailable, the workflow logs a warning and continues without breaking agent execution.
+- Multi-model routing: agents use the shared LangChain model factory in `agents/shared.py`. Market and News default to DeepSeek; Risk, Supervisor, and Evaluator default to OpenAI. Structured outputs continue through the existing Pydantic validation flow.
+- Observability layer: optional LangSmith traces cover workflow and agent execution. Agent traces include agent, provider, and model metadata; LangChain run data includes latency and token usage when available.
+- Failure tolerance: tracing is optional infrastructure. DeepSeek agents may use the existing DeepSeek HTTP fallback after a LangChain failure; OpenAI agents must propagate failures without switching providers.
 
 ## Agent responsibilities
 - `MarketAgent`
@@ -69,8 +69,16 @@ This project uses an explicit, bounded workflow rather than free-form agent-to-a
 - No external market/news fetching happens inside the specialist agents.
 - The orchestrator owns sequencing and loop control.
 - All payloads are validated with Pydantic before downstream usage.
-- The OpenAI SDK integration is a compatibility layer, not a change to the agent graph itself; the orchestration rules and bounded loop remain intact.
+- Model-provider selection is a compatibility/configuration layer, not a change to the agent graph; the orchestration rules and bounded loop remain intact.
 - Observability is layered on top of the workflow instead of embedded inside each specialist, so model execution remains easy to reason about and test.
+
+## Model routing
+- Defaults: `MarketAgent` and `NewsAgent` use provider `deepseek`, model `deepseek-chat`; `RiskAgent`, `SupervisorAgent`, and `EvaluatorAgent` use provider `openai`, model `gpt-4.1`.
+- Each default can be overridden independently with `<AGENT>_AGENT_PROVIDER` and `<AGENT>_AGENT_MODEL`, for example `RISK_AGENT_PROVIDER` and `RISK_AGENT_MODEL`.
+- Credentials are selected by provider: `DEEPSEEK_API_KEY` for DeepSeek and `OPENAI_API_KEY` for OpenAI. The orchestrator must not pass its DeepSeek key to OpenAI agents.
+- An agent recheck uses the same configured provider and model as that agent’s initial run. Dependent Risk and Supervisor reruns likewise use their own configuration.
+- The no-news path may return a validated local News result without making a model call.
+- Model calls use the shared LangChain adapter and retain the existing input/output schemas and API contracts. Provider failures do not trigger cross-provider fallback.
 
 ## Evaluator and recheck behavior
 - `EvaluatorOutput.recheck_target` must be one of: `market`, `news`, `risk`, or `none`.

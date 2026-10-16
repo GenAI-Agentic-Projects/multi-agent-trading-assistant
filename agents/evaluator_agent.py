@@ -15,16 +15,17 @@ from .shared import (
     _call_deepseek_json,
     invoke_langchain_structured,
     langsmith_trace,
+    resolve_provider_api_key,
+    resolve_agent_model,
 )
 
 logger = logging.getLogger(__name__)
 
 
 class EvaluatorAgent:
-    def __init__(self, api_key: Optional[str] = None, timeout_seconds: int = 15, provider: Optional[str] = None):
-        self.api_key = api_key or os.getenv("DEEPSEEK_API_KEY")
-        self.provider = provider or os.getenv("MODEL_PROVIDER", "deepseek")
-        self.model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+    def __init__(self, api_key: Optional[str] = None, timeout_seconds: int = 15, provider: Optional[str] = None, model_name: Optional[str] = None):
+        self.provider, self.model = resolve_agent_model("evaluator", provider, model_name)
+        self.api_key = resolve_provider_api_key(self.provider, api_key)
         self.base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
         self.timeout_seconds = timeout_seconds
 
@@ -102,6 +103,9 @@ class EvaluatorAgent:
                 logger.info("Evaluator completed")
                 return validated
             except (ModelInvocationError, ModelResponseError) as exc:
+                if self.provider != "deepseek":
+                    logger.exception("Evaluator model invocation failed")
+                    raise
                 logger.warning("LangChain execution failed, falling back to legacy DeepSeek request: %s", exc)
                 payload = _call_deepseek_json(
                     self.api_key,

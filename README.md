@@ -23,7 +23,8 @@ The workflow is explicit and bounded rather than recursive. The implementation r
 
 The project uses LangChain for structured model calls and LangSmith for optional tracing:
 
-- Model calls go through a shared LangChain adapter using structured output and Pydantic validation. DeepSeek is the default provider; the adapter also contains OpenAI and Anthropic integrations. When LangChain structured output fails, agents retain a DeepSeek-compatible JSON request fallback.
+- Model calls go through a shared LangChain adapter using structured output and Pydantic validation. Market and News default to DeepSeek; Risk, Supervisor, and Evaluator default to OpenAI. Provider and model are configurable per agent with `MARKET_AGENT_PROVIDER`, `MARKET_AGENT_MODEL`, `NEWS_AGENT_PROVIDER`, `NEWS_AGENT_MODEL`, `RISK_AGENT_PROVIDER`, `RISK_AGENT_MODEL`, `SUPERVISOR_AGENT_PROVIDER`, `SUPERVISOR_AGENT_MODEL`, `EVALUATOR_AGENT_PROVIDER`, and `EVALUATOR_AGENT_MODEL`.
+- DeepSeek agents retain the existing DeepSeek-compatible JSON request fallback. OpenAI failures propagate without silently switching providers. LangSmith traces identify the agent, provider, and model; LangChain model runs report latency and token usage where the provider supplies it.
 - LangSmith tracing is optional and non-blocking. When configured, the workflow records the overall run and named traces for agent calls, evaluator decisions, and targeted rechecks. Missing tracing credentials, the LangSmith package, or exporter connectivity do not stop the research workflow.
 
 The model workflow remains explicit and bounded; LangChain and LangSmith provide model-call and observability infrastructure rather than changing the graph.
@@ -79,16 +80,16 @@ There are two separate evaluation paths:
 - The runtime `EvaluatorAgent` compares the specialist outputs with the supervisor recommendation. It returns `needs_recheck`, a reason, a target (`market`, `news`, `risk`, or `none`), and confidence. The orchestrator refreshes only the requested evidence and dependent agents, and stops after at most two rechecks. If the cap is reached while another recheck is still requested, the final confidence is set to low.
 - `RiskAgentJudge` is a standalone LLM-as-judge helper for development evaluation; it is not called by the production orchestrator. The risk evaluation tests cover deterministic output-schema checks and seven fixed scenarios. The optional live judge scores each valid response from 1 to 5 and checks support, missed risks, and unsupported claims. At least six scenarios must be supported, score 4 or higher, and have no detected hallucinations.
 
-Run the test suite without API credentials or live model calls by selecting a provider mode with empty keys. The live risk evaluation remains skipped unless `RUN_LLM_EVALS=1`:
+Run the test suite without API credentials or live model calls by leaving provider keys unset. The live risk evaluation remains skipped unless `RUN_LLM_EVALS=1`:
 
 ```bash
-MODEL_PROVIDER=openai DEEPSEEK_API_KEY= OPENAI_API_KEY= python3 -m unittest discover -s tests -v
+DEEPSEEK_API_KEY= OPENAI_API_KEY= python3 -m unittest discover -s tests -v
 ```
 
 Run only the risk evaluation tests, also without live model calls:
 
 ```bash
-MODEL_PROVIDER=openai DEEPSEEK_API_KEY= OPENAI_API_KEY= python3 -m unittest discover -s tests -p "test_risk_agent_eval.py" -v
+DEEPSEEK_API_KEY= OPENAI_API_KEY= python3 -m unittest discover -s tests -p "test_risk_agent_eval.py" -v
 ```
 
 To run the seven-scenario risk judge evaluation against a live model, set `RUN_LLM_EVALS=1` and configure the model credentials first:

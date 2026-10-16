@@ -18,6 +18,7 @@ from .shared import (
     _call_deepseek_json,
     configure_langsmith,
     langsmith_trace,
+    resolve_agent_api_key,
 )
 from .supervisor_agent import SupervisorAgent
 
@@ -38,6 +39,9 @@ class TradingAssistOrchestrator:
         }
         return langsmith_trace("TSX Stock Research", metadata=trace_metadata)
 
+    def _agent_api_key(self, agent_name: str) -> Optional[str]:
+        return resolve_agent_api_key(agent_name, self.api_key)
+
     def run(self, research_payload: Union[ResearchContext, Dict[str, Any]]) -> Dict[str, Any]:
         logger.info("workflow execution started")
         context = ResearchContext.validate_or_raise(research_payload)
@@ -55,10 +59,10 @@ class TradingAssistOrchestrator:
             ):
                 pass
 
-            market_result = MarketAgent(api_key=self.api_key, timeout_seconds=self.timeout_seconds).run(context)
-            news_result = NewsAgent(api_key=self.api_key, timeout_seconds=self.timeout_seconds).run(context)
-            risk_result = RiskAgent(api_key=self.api_key, timeout_seconds=self.timeout_seconds).run(context, market_result, news_result)
-            supervisor_result = SupervisorAgent(api_key=self.api_key, timeout_seconds=self.timeout_seconds).run(context, market_result, news_result, risk_result)
+            market_result = MarketAgent(api_key=self._agent_api_key("market"), timeout_seconds=self.timeout_seconds).run(context)
+            news_result = NewsAgent(api_key=self._agent_api_key("news"), timeout_seconds=self.timeout_seconds).run(context)
+            risk_result = RiskAgent(api_key=self._agent_api_key("risk"), timeout_seconds=self.timeout_seconds).run(context, market_result, news_result)
+            supervisor_result = SupervisorAgent(api_key=self._agent_api_key("supervisor"), timeout_seconds=self.timeout_seconds).run(context, market_result, news_result, risk_result)
             recheck_count = 0
             final_result = dict(supervisor_result)
             final_result.setdefault("recheck_count", 0)
@@ -72,7 +76,7 @@ class TradingAssistOrchestrator:
                         "recheck_count": str(recheck_count),
                     },
                 ):
-                    evaluator_result = EvaluatorAgent(api_key=self.api_key, timeout_seconds=self.timeout_seconds).run(
+                    evaluator_result = EvaluatorAgent(api_key=self._agent_api_key("evaluator"), timeout_seconds=self.timeout_seconds).run(
                         context,
                         market_result,
                         news_result,
@@ -108,11 +112,11 @@ class TradingAssistOrchestrator:
                     },
                 ):
                     if target == "market":
-                        market_result = MarketAgent(api_key=self.api_key, timeout_seconds=self.timeout_seconds).run(context)
+                        market_result = MarketAgent(api_key=self._agent_api_key("market"), timeout_seconds=self.timeout_seconds).run(context)
                     elif target == "news":
-                        news_result = NewsAgent(api_key=self.api_key, timeout_seconds=self.timeout_seconds).run(context)
+                        news_result = NewsAgent(api_key=self._agent_api_key("news"), timeout_seconds=self.timeout_seconds).run(context)
                     elif target == "risk":
-                        risk_result = RiskAgent(api_key=self.api_key, timeout_seconds=self.timeout_seconds).run(context, market_result, news_result)
+                        risk_result = RiskAgent(api_key=self._agent_api_key("risk"), timeout_seconds=self.timeout_seconds).run(context, market_result, news_result)
                     else:
                         final_result["confidence"] = evaluator_result["confidence"]
                         final_result["recheck_count"] = recheck_count
@@ -120,9 +124,9 @@ class TradingAssistOrchestrator:
                         break
 
                     if target in {"market", "news"}:
-                        risk_result = RiskAgent(api_key=self.api_key, timeout_seconds=self.timeout_seconds).run(context, market_result, news_result)
+                        risk_result = RiskAgent(api_key=self._agent_api_key("risk"), timeout_seconds=self.timeout_seconds).run(context, market_result, news_result)
 
-                    supervisor_result = SupervisorAgent(api_key=self.api_key, timeout_seconds=self.timeout_seconds).run(context, market_result, news_result, risk_result)
+                    supervisor_result = SupervisorAgent(api_key=self._agent_api_key("supervisor"), timeout_seconds=self.timeout_seconds).run(context, market_result, news_result, risk_result)
                     final_result = dict(supervisor_result)
                     recheck_count += 1
                     final_result["recheck_count"] = recheck_count

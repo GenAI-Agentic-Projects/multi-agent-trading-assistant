@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -96,6 +97,17 @@ class LegacyCompatibilityTests(unittest.TestCase):
 
 
 class MultiAgentWorkflowTests(unittest.TestCase):
+    def setUp(self):
+        self.model_env = patch.dict(os.environ, {
+            "MARKET_AGENT_PROVIDER": "deepseek",
+            "NEWS_AGENT_PROVIDER": "deepseek",
+            "RISK_AGENT_PROVIDER": "deepseek",
+            "SUPERVISOR_AGENT_PROVIDER": "deepseek",
+            "EVALUATOR_AGENT_PROVIDER": "deepseek",
+        })
+        self.model_env.start()
+        self.addCleanup(self.model_env.stop)
+
     def _mock_response(self, payload):
         response = type("Resp", (), {})()
         response.status_code = 200
@@ -258,6 +270,17 @@ class MultiAgentWorkflowTests(unittest.TestCase):
 
 
 class LoopEngineeringTests(unittest.TestCase):
+    def setUp(self):
+        self.model_env = patch.dict(os.environ, {
+            "MARKET_AGENT_PROVIDER": "deepseek",
+            "NEWS_AGENT_PROVIDER": "deepseek",
+            "RISK_AGENT_PROVIDER": "deepseek",
+            "SUPERVISOR_AGENT_PROVIDER": "deepseek",
+            "EVALUATOR_AGENT_PROVIDER": "deepseek",
+        })
+        self.model_env.start()
+        self.addCleanup(self.model_env.stop)
+
     def _mock_response(self, payload):
         response = type("Resp", (), {})()
         response.status_code = 200

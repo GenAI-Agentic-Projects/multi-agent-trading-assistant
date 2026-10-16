@@ -182,8 +182,53 @@ def langsmith_trace(name: str, *, metadata: Optional[Dict[str, str]] = None, run
             logger.warning("LangSmith trace cleanup failed: %s", exc)
 
 
+AGENT_MODEL_DEFAULTS = {
+    "market": ("deepseek", "deepseek-chat"),
+    "news": ("deepseek", "deepseek-chat"),
+    "risk": ("openai", "gpt-4.1"),
+    "supervisor": ("openai", "gpt-4.1"),
+    "evaluator": ("openai", "gpt-4.1"),
+}
+
+
+def resolve_agent_model(
+    agent_name: str,
+    provider: Optional[str] = None,
+    model_name: Optional[str] = None,
+) -> tuple[str, str]:
+    agent_key = agent_name.strip().lower().removesuffix("_agent")
+    if agent_key not in AGENT_MODEL_DEFAULTS:
+        raise ModelInvocationError(f"No model configuration for agent: {agent_name}")
+
+    default_provider, default_model = AGENT_MODEL_DEFAULTS[agent_key]
+    prefix = f"{agent_key.upper()}_AGENT"
+    resolved_provider = (
+        provider or os.getenv(f"{prefix}_PROVIDER") or default_provider
+    ).strip().lower()
+    resolved_model = model_name or os.getenv(f"{prefix}_MODEL") or default_model
+    return resolved_provider, resolved_model
+
+
 def resolve_model_provider(provider: Optional[str] = None) -> str:
-    return (provider or os.getenv("MODEL_PROVIDER") or "deepseek").strip().lower()
+    return (provider or "deepseek").strip().lower()
+
+
+def resolve_provider_api_key(provider: str, api_key: Optional[str] = None) -> Optional[str]:
+    if api_key:
+        return api_key
+    key_names = {
+        "deepseek": "DEEPSEEK_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+    }
+    key_name = key_names.get(provider.strip().lower())
+    return os.getenv(key_name) if key_name else None
+
+
+def resolve_agent_api_key(agent_name: str, deepseek_api_key: Optional[str] = None) -> Optional[str]:
+    provider, _ = resolve_agent_model(agent_name)
+    explicit_key = deepseek_api_key if provider == "deepseek" else None
+    return resolve_provider_api_key(provider, explicit_key)
 
 
 def build_langchain_model(
@@ -200,7 +245,7 @@ def build_langchain_model(
         except Exception as exc:
             raise ModelInvocationError("langchain-openai is not installed") from exc
 
-        effective_key = api_key or os.getenv("OPENAI_API_KEY") or os.getenv("DEEPSEEK_API_KEY")
+        effective_key = resolve_provider_api_key(provider_name, api_key)
         if not effective_key:
             raise ModelInvocationError("No API key configured for the selected model provider")
 
@@ -229,7 +274,7 @@ def build_langchain_model(
         except Exception as exc:
             raise ModelInvocationError("langchain-anthropic is not installed") from exc
 
-        effective_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+        effective_key = resolve_provider_api_key(provider_name, api_key)
         if not effective_key:
             raise ModelInvocationError("ANTHROPIC_API_KEY is not configured")
 
@@ -655,6 +700,10 @@ __all__ = [
     "is_langsmith_disabled",
     "configure_langsmith",
     "langsmith_trace",
+    "AGENT_MODEL_DEFAULTS",
+    "resolve_agent_model",
+    "resolve_agent_api_key",
+    "resolve_provider_api_key",
     "resolve_model_provider",
     "build_langchain_model",
     "invoke_langchain_structured",
