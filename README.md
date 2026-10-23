@@ -174,6 +174,20 @@ The API is served on:
 http://localhost:8000
 ```
 
+## Frontend MVP
+
+The separate React, Vite, and TypeScript app in `frontend/` provides a watchlist manager, on-demand stock research, and ranked active-stock candidates. It uses the existing FastAPI endpoints; no separate frontend service or CORS configuration is required for local development.
+
+Start the backend as above, then in another terminal:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open the Vite URL printed in the terminal (typically `http://localhost:5173`). The development server proxies `/api` requests to `http://127.0.0.1:8000`. Set `VITE_API_BASE_URL` in `frontend/.env` to override the API base URL. Research and Rankings require the backend's configured model-provider credentials; Rankings runs research for active stocks.
+
 ## Demo execution options
 
 ### Option 1: run the demo runner
