@@ -122,6 +122,33 @@ def list_stocks(db: Session = Depends(get_db)):
     return stocks
 
 
+@app.get("/stocks/rank", response_model=StockRankResponse)
+def rank_active_stocks(limit: int = 20, db: Session = Depends(get_db)):
+    """Rank the currently active stocks in the watchlist using deterministic scoring."""
+    safe_limit = max(1, min(limit, MAX_RANKING_STOCKS))
+    active_stocks = (
+        db.query(Stock)
+        .filter(Stock.active.is_(True))
+        .order_by(Stock.ticker.asc())
+        .limit(safe_limit)
+        .all()
+    )
+
+    if not active_stocks:
+        return StockRankResponse(results=[], failed=[])
+
+    def research_fn(stock: Stock):
+        return _run_single_stock_research(stock)
+
+    return rank_research_results(
+        research_results=[],
+        stock_rows=active_stocks,
+        research_fn=research_fn,
+        limit=safe_limit,
+        include_failed=True,
+    )
+
+
 @app.get("/stocks/{ticker}", response_model=StockResponse)
 def get_stock(ticker: str, db: Session = Depends(get_db)):
     """Get a specific stock by ticker"""
@@ -194,33 +221,6 @@ def get_stock_research(ticker: str, db: Session = Depends(get_db)):
 
     result = _run_single_stock_research(stock)
     return ResearchResponse.model_validate(result)
-
-
-@app.get("/stocks/rank", response_model=StockRankResponse)
-def rank_active_stocks(limit: int = 20, db: Session = Depends(get_db)):
-    """Rank the currently active stocks in the watchlist using deterministic scoring."""
-    safe_limit = max(1, min(limit, MAX_RANKING_STOCKS))
-    active_stocks = (
-        db.query(Stock)
-        .filter(Stock.active.is_(True))
-        .order_by(Stock.ticker.asc())
-        .limit(safe_limit)
-        .all()
-    )
-
-    if not active_stocks:
-        return StockRankResponse(results=[], failed=[])
-
-    def research_fn(stock: Stock):
-        return _run_single_stock_research(stock)
-
-    return rank_research_results(
-        research_results=[],
-        stock_rows=active_stocks,
-        research_fn=research_fn,
-        limit=safe_limit,
-        include_failed=True,
-    )
 
 
 if __name__ == "__main__":
