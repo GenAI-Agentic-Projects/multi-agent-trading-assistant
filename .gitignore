@@ -17,3 +17,5 @@ build/
 *.swp
 *.swo
 *~
+.neon
+node_modules/

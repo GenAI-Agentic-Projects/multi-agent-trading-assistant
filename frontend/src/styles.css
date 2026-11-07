@@ -25,7 +25,7 @@ button:disabled { cursor: wait; opacity: .65; }
 .topbar { height: 72px; padding: 0 max(5vw, 28px); display: flex; align-items: center; border-bottom: 1px solid #e7ebe6; background: rgba(255,255,255,.86); }
 .brand { display: inline-flex; gap: 10px; align-items: center; color: var(--ink); text-decoration: none; }
 .brand-symbol { width: 29px; height: 29px; border: 1.5px solid var(--green); border-radius: 50%; display: grid; place-items: center; }
-.brand-symbol span { width: 7px; height: 7px; background: #d78354; transform: rotate(45deg); }
+.brand-symbol svg { width: 19px; height: 19px; fill: none; stroke: var(--green); stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
 .brand-name { font-size: 18px; font-weight: 700; letter-spacing: 0; }
 .brand-period { color: #d78354; }
 .main-nav { display: flex; align-self: stretch; gap: 32px; margin-left: 76px; }

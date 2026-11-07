@@ -4,7 +4,7 @@ This project combines a simple stock watchlist API with a bounded multi-agent re
 
 ## What it does
 
-- Maintains a SQLite-backed watchlist of stocks
+- Maintains a PostgreSQL-backed watchlist when `DATABASE_URL` is configured, with SQLite as the local fallback
 - Retrieves market and historical analytics for a ticker
 - Collects relevant company news
 - Runs a multi-agent research workflow:
@@ -149,7 +149,10 @@ pip install -r requirements.txt
 
 ### Environment variables
 
+Set `DATABASE_URL` in the project-root `.env` to the Neon pooled connection string to use Neon. If it is unset, the app uses `./stocks.db`.
+
 ```bash
+export DATABASE_URL="postgresql://USER:PASSWORD@HOST/DBNAME?sslmode=require"
 export DEEPSEEK_API_KEY="..."
 export MODEL_PROVIDER="deepseek"  # default; adapter values: deepseek, openai, anthropic
 export DEEPSEEK_MODEL="deepseek-chat"
@@ -173,6 +176,7 @@ The API is served on:
 ```text
 http://localhost:8000
 ```
+
 
 ## Frontend MVP
 

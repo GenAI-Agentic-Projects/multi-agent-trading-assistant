@@ -11,9 +11,13 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <a className="brand" href="#watchlist" aria-label="Northstar home">
-          <span className="brand-symbol" aria-hidden="true"><span /></span>
-          <span className="brand-name">northstar<span className="brand-period">.</span></span>
+        <a className="brand" href="#watchlist" aria-label="StockForge home">
+          <span className="brand-symbol" aria-hidden="true">
+            <svg viewBox="0 0 20 20" focusable="false">
+              <path d="M3 15.5 7.2 11l3.1 2.2L17 5.5M12.7 5.5H17v4.3" />
+            </svg>
+          </span>
+          <span className="brand-name">StockForge<span className="brand-period">.</span></span>
         </a>
         <nav className="main-nav" aria-label="Main navigation">
           {(["watchlist", "research", "rankings"] as const).map((tab) => (

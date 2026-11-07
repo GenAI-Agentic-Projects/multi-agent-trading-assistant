@@ -1,7 +1,9 @@
 import importlib.util
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, Depends, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from database import init_db, get_db
 from models import Stock
@@ -41,6 +43,14 @@ ModelResponseError = research_agent_module.ModelResponseError
 MissingRequiredInputError = research_agent_module.MissingRequiredInputError
 
 app = FastAPI(title="TSX Stock Watchlist API", version="1.0.0")
+cors_origins = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "").split(",") if origin.strip()]
+if cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization"],
+    )
 MAX_RANKING_STOCKS = 20
 
 
@@ -98,6 +108,11 @@ def _run_single_stock_research(stock: Stock):
 def startup():
     """Initialize database on startup"""
     init_db()
+
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
 
 
 @app.post("/stocks", response_model=StockResponse, status_code=201)
