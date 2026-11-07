@@ -1,4 +1,5 @@
 import math
+import logging
 import os
 import threading
 import time
@@ -8,6 +9,8 @@ import requests
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 ALPHA_VANTAGE_URL = "https://www.alphavantage.co/query"
 CACHE_TTL_SECONDS = 15 * 60
@@ -68,6 +71,7 @@ def _fetch_closes(ticker: str) -> list[float]:
 
     message = payload.get("Note") or payload.get("Information")
     if message:
+        logger.warning("Alpha Vantage rejected request for %s: %s", symbol, str(message)[:500])
         raise RateLimitError("Alpha Vantage rate limit reached; please retry later")
     if payload.get("Error Message"):
         raise HistoricalDataNotFoundError("Historical data not found for this ticker")
